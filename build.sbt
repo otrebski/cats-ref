@@ -25,6 +25,8 @@ libraryDependencies ++= Seq(
 )
 
 
+libraryDependencies += "org.slf4j" % "slf4j-nop" % "1.7.30"
+
 libraryDependencies += "org.scalactic" %% "scalactic" % "3.0.8" % Test
 libraryDependencies += "org.scalatest" %% "scalatest" % "3.0.8" % Test
 

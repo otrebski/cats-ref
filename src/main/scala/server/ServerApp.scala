@@ -1,43 +1,53 @@
 package server
 
-import java.io.FileInputStream
+import java.net.URL
 
 import cats.data.Kleisli
 import cats.effect.concurrent.Ref
 import cats.effect.{ContextShift, ExitCode, Fiber, IO, IOApp, Timer}
-
 import scala.concurrent.duration._
-import scala.io.BufferedSource
+import scala.io.{BufferedSource, Source}
 import scala.language.postfixOps
+import scala.util.matching.Regex
+
+import cats.implicits._
+import server.GovKoronavirusStats.Stats
 
 object ServerApp extends IOApp {
-  type FileContent = String
 
-  def loop(update: IO[String], cache: Ref[IO, FileContent]): IO[Unit] = for {
+  def loop(update: IO[Option[Stats]], cache: Ref[IO, Option[Stats]]): IO[Unit] = for {
     newContent <- update
-    oldContent <- cache.get
-    _ <- if (newContent != oldContent) IO(println("Content updated")) else IO.unit
-    _ <- cache.set(newContent)
-    _ <- Timer[IO].sleep(10 seconds)
+    _ <- cache.getAndUpdate(old => if (newContent.isDefined) newContent else old)
+//    _ <- cache.set(newContent)
+    _ <- Timer[IO].sleep(120 seconds)
     _ <- loop(update, cache)
   } yield ()
 
   override def run(args: List[String]): IO[ExitCode] = {
-    val update: IO[String] = IO {
-      try {
-        val source = new BufferedSource(new FileInputStream("file.txt"))
-        source.getLines().mkString("\n")
-      } catch {
-        case e: Exception => ""
-      }
-    }
-
+    val port = 8090
     val program = for {
-      cache <- Ref.of[IO, FileContent]("")
-      fiber <- HttpServer.start(cache)
-      _ <- loop(update, cache)
+      cache <- Ref.of[IO, Option[Stats]](none[Stats])
+      _ <- HttpServer.start(cache, port)
+      _ <- IO(println(s"Stared on http://localhost:$port/"))
+      _ <- loop(GovKoronavirusStats.read(), cache)
     } yield ()
     program.map(_ => ExitCode.Success)
+  }
+}
+
+object GovKoronavirusStats {
+  case class Stats(date: String, confirmed: Int, deaths: Int)
+  def read(): IO[Option[Stats]] = IO {
+    val url = new URL("https://www.gov.pl/web/koronawirus/wykaz-zarazen-koronawirusem-sars-cov-2")
+    val source: BufferedSource = Source.fromURL(url)
+    val lines = source.getLines()
+    val dataLine: Option[String] = lines.find(_.contains("aktualne na"))
+    val r: Regex = ".*aktualne na : (\\d{1,2}.\\d{2}.\\d{4} \\d{1,2}:\\d{2}).*Cała Polska;(\\d+);(\\d+).*".r
+    dataLine.flatMap {
+      case r(date, confirmed, deaths) =>
+        Stats(date, confirmed.toInt, deaths.toInt).some
+      case _ => None
+    }
   }
 }
 
@@ -53,21 +63,25 @@ object HttpServer {
   implicit val cs: ContextShift[IO] = IO.contextShift(global)
   implicit val timer: Timer[IO] = IO.timer(global)
 
-  def start(cache: Ref[IO, String]): IO[Fiber[IO, Nothing]] = {
-
+  def start(cache: Ref[IO, Option[Stats]], port:Int): IO[Fiber[IO, Nothing]] = {
     val service: HttpRoutes[IO] = HttpRoutes.of[IO] {
       case GET -> Root =>
         val current: IO[Response[IO]] = for {
           result <- cache.get
-          response <- Ok(result)
+          response <- result match {
+            case Some(stats) => Ok(s"Update:${stats.date}\nConfirmed: ${stats.confirmed}\nDeaths: ${stats.deaths}")
+            case None => Ok("No data")
+          }
+
         } yield response
         current
     }
 
     val httpApp: Kleisli[IO, Request[IO], Response[IO]] = Router("/" -> service).orNotFound
     val serverBuilder: BlazeServerBuilder[IO] = BlazeServerBuilder[IO]
-      .bindHttp(8090, "localhost")
+      .bindHttp(port, "0.0.0.0")
       .withHttpApp(httpApp)
+
     serverBuilder.resource.use(_ => IO.never).start
   }
 }
