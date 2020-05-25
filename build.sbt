@@ -15,9 +15,9 @@ scalacOptions ++= Seq(
 )
 
 libraryDependencies += "org.typelevel" %% "cats-core" % "2.1.1"
-libraryDependencies += "org.typelevel" %% "cats-effect" % "2.1.2"
+libraryDependencies += "org.typelevel" %% "cats-effect" % "2.1.3"
 
-val http4sVersion = "0.21.0"
+val http4sVersion = "0.21.4"
 libraryDependencies ++= Seq(
   "org.http4s" %% "http4s-dsl" % http4sVersion,
   "org.http4s" %% "http4s-blaze-server" % http4sVersion,
